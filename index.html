@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#10202e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>CAN USTA — Mutfak Devriyesi</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Oyun 480x270 iç çözünürlükte çizilir ve ekranın tamamına yayılır. -->
+  <div id="stage">
+    <canvas id="game" width="480" height="270" tabindex="0"
+            aria-label="Can Usta Mutfak Devriyesi oyunu"></canvas>
+  </div>
+
+  <!-- Telefonda aynı anda koşma, eğilme ve doğrama için çoklu dokunmatik. -->
+  <div id="mobile-controls" aria-label="Dokunmatik oyun kumandası">
+    <div class="touch-system" role="group" aria-label="Oyun seçenekleri">
+      <button class="touch-btn touch-mini" type="button" data-actions="pause" aria-label="Duraklat">P</button>
+      <button class="touch-btn touch-mini" type="button" data-actions="retry" aria-label="Tekrar dene">O</button>
+    </div>
+
+    <div class="touch-move" role="group" aria-label="Hareket">
+      <button class="touch-btn touch-w" type="button" data-actions="jump" aria-label="Zıpla">W</button>
+      <button class="touch-btn touch-climb" type="button" data-actions="up" aria-label="Tırman">&uarr;</button>
+      <button class="touch-btn touch-a" type="button" data-actions="left" aria-label="Sola git">A</button>
+      <button class="touch-btn touch-s" type="button" data-actions="down" aria-label="Eğil">S</button>
+      <button class="touch-btn touch-d" type="button" data-actions="right" aria-label="Sağa git">D</button>
+    </div>
+
+    <div class="touch-action" role="group" aria-label="Eylem">
+      <button class="touch-btn touch-main" type="button" data-actions="chop use" aria-label="Başla">
+        <strong>BAŞLA</strong><small>EYLEM</small>
+      </button>
+    </div>
+  </div>
+
+  <div id="rotate-device" role="status">
+    <span>&#8635;</span>
+    <strong>TELEFONU YAN ÇEVİR</strong>
+    <small>Can Usta geniş ekranda daha rahat oynanır.</small>
+  </div>
+
+  <!-- Tuş listesi. Düz DOM, tuvale hiç yük bindirmiyor. -->
+  <footer id="legend">
+    <span><b>A</b> <b>D</b> yürü</span>
+    <span><b>W</b> zıpla</span>
+    <span><b>S</b> eğil</span>
+    <span><b>S + W</b> alttan geç</span>
+    <span><b>&uarr;</b> tırman</span>
+    <span><b>SPACE</b> yakala <i>(1. perde)</i> &middot; kullan <i>(2. perde)</i></span>
+    <span><b>S + SPACE</b> tabağı at</span>
+    <span><b>X</b> işten çıkar <i>(maaş günü)</i></span>
+    <span><b>O</b> tekrar</span>
+    <span><b>P</b> duraklat</span>
+  </footer>
+
+  <script src="game.js"></script>
+</body>
+</html>
