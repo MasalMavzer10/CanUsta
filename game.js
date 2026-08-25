@@ -3587,6 +3587,10 @@ class Kitchen {
   /* --------------------------------------------------------------- update */
 
   step(dt, input) {
+    // HUD notifications must age in every Act 2 state, including before a
+    // second branch exists and while payroll/shop overlays freeze the room.
+    this._stepAlerts(dt);
+
     if (this.finished) {
       // Let the last reaction play out, but stop the simulation churning.
       for (const c of this.customers) c.step(dt);
@@ -4225,11 +4229,19 @@ class Kitchen {
   get awayName() { return this.away ? this.away.name : null; }
 
   /** Shout something over from the branch you are not standing in. */
-  pushAlert(text, color = '#f2b53c', trouble = null) {
-    this.alerts.push({ text, color, life: 7 });
+  pushAlert(text, color = '#f2b53c', trouble = null, duration = null) {
+    // Green confirmations should feel snappy. Operational warnings need
+    // longer because they can require the player to change branches.
+    const life = duration ?? (trouble ? 7 : color === '#74e0b0' ? 2.2 : 4.2);
+    this.alerts.push({ text, color, life });
     if (this.alerts.length > 3) this.alerts.shift();
     if (trouble && this.away) this.away.trouble = trouble;
     this.game.sfx.thud();
+  }
+
+  _stepAlerts(dt) {
+    for (const alert of this.alerts) alert.life -= dt;
+    this.alerts = this.alerts.filter((alert) => alert.life > 0);
   }
 
   /**
@@ -4240,9 +4252,6 @@ class Kitchen {
   _stepAway(dt) {
     const a = this.away;
     if (!a) return;
-
-    for (const al of this.alerts) al.life -= dt;
-    this.alerts = this.alerts.filter((al) => al.life > 0);
 
     a.timer -= dt;
     if (a.timer > 0) return;
