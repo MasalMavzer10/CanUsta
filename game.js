@@ -643,6 +643,10 @@ class Input {
     for (const button of root.querySelectorAll('[data-actions]')) {
       button.addEventListener('pointerdown', (e) => {
         e.preventDefault();
+        // If the on-screen control is being used, the interface is mobile
+        // regardless of how a hybrid browser reports pointer capabilities.
+        this.touchMode = true;
+        document.documentElement.classList.add('touch-enabled');
         const actions = button.dataset.actions.trim().split(/\s+/);
 
         if (actions.includes('sensitivity')) {
@@ -729,6 +733,8 @@ class Input {
     zone.addEventListener('pointerdown', (e) => {
       if (this.joystickPointer !== null) return;
       e.preventDefault();
+      this.touchMode = true;
+      document.documentElement.classList.add('touch-enabled');
       zone.setPointerCapture?.(e.pointerId);
       this.joystickPointer = e.pointerId;
 
@@ -4540,8 +4546,8 @@ class Kitchen {
   }
 
   /**
-   * The management screen. Three tabs: who works here, what they work with,
-   * and who else is out there. A/D switch tab, W/S move, E confirms.
+   * The management screen. Four tabs: staff, equipment, map and debts.
+   * A/D switch tab, W/S move, and the current action button confirms.
    */
   _stepShop(input) {
     const TABS = 4;
@@ -5086,7 +5092,7 @@ class Kitchen {
     if (short > 0) {
       f.draw(ctx, `${Math.round(short)} SEVGİ EKSİK`, CFG.VIEW_W / 2, by - 12,
              { align: 'center', color: '#e8604f', shadow: '#1b1220' });
-      f.draw(ctx, touch ? 'MAAŞ ÖDE: ELİNDEKİ ÖDENİR - GERİSİ DEFTERE'
+      f.draw(ctx, touch ? 'MAAŞ ÖDE DÜĞMESİ: ELİNDEKİ ÖDENİR - GERİSİ DEFTERE'
                         : 'SPACE: ELİNDEKİNİ ÖDE - GERİSİ DEFTERE',
              CFG.VIEW_W / 2, by, { align: 'center', color: '#f2b53c' });
       f.draw(ctx, touch ? 'İŞTEN ÇIKAR DÜĞMESİ: SEÇİLEN PERSONEL'
@@ -5099,7 +5105,7 @@ class Kitchen {
                         : 'X: SEÇİLENİ İŞTEN ÇIKAR',
              CFG.VIEW_W / 2, by + 18, { align: 'center', color: '#8d8296' });
     }
-    f.draw(ctx, touch ? 'JOYSTICK YUKARI AŞAĞI: SEÇ' : 'W S SEÇ', CFG.VIEW_W / 2, CFG.VIEW_H - 10,
+    f.draw(ctx, touch ? 'JOYSTICK YUKARI AŞAĞI: PERSONEL SEÇ' : 'W S SEÇ', CFG.VIEW_W / 2, CFG.VIEW_H - 10,
            { align: 'center', color: '#6d6376' });
 
     if (this.hintTimer > 0) {
@@ -5112,9 +5118,67 @@ class Kitchen {
    * Toasts from the branch you are not standing in, plus a standing badge
    * while whatever went wrong over there is still wrong.
    */
-  _drawAlerts(ctx) {
+  _drawRivalBadge(ctx, bite) {
     const f = this.game.font;
-    let y = 66;
+    const x = 3, y = 48, w = 82, h = 27;
+    const pulse = Math.sin(this.game.time * 5) > -0.25;
+
+    // A narrow left-edge lane keeps this warning clear of the centred
+    // order rail (which occupies y=32..62 even when all five slots are full).
+    ctx.fillStyle = 'rgba(31,17,24,0.94)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = pulse ? '#e8604f' : '#8d5450';
+    ctx.fillRect(x, y, 2, h);
+    ctx.fillRect(x, y, w, 1);
+    f.draw(ctx, 'RAKİPLER ÖNDE', x + 6, y + 5,
+           { color: '#f6d2ca', shadow: '#1b1220' });
+    f.draw(ctx, `MÜŞTERİ -%${bite}`, x + 6, y + 16,
+           { color: pulse ? '#e8604f' : '#b96a62', shadow: '#1b1220' });
+  }
+
+  _drawGoalCard(ctx) {
+    const f = this.game.font;
+    const goal = KIDS_GOALS[this.goalIndex];
+    const x = 3, y = 79;
+
+    if (goal) {
+      const value = Math.min(goal.target, goal.value(this));
+      const text = `${goal.label}  ${value}/${goal.target}`;
+      const w = Math.min(CFG.VIEW_W - 150, Math.max(146, f.width(text) + 14));
+
+      // Goals used to sit along the floor and hide BULAŞIK, MANGAL and
+      // other material names. This dedicated upper-left card leaves every
+      // station label readable while the player moves through the kitchen.
+      ctx.fillStyle = 'rgba(20,14,24,0.90)';
+      ctx.fillRect(x, y, w, 23);
+      ctx.fillStyle = '#8d6a2c';
+      ctx.fillRect(x, y, w, 1);
+      f.draw(ctx, `HEDEF ${this.goalIndex + 1}/${KIDS_GOALS.length}`, x + 5, y + 4,
+             { color: '#f2b53c', shadow: '#1b1220' });
+      f.draw(ctx, text, x + 5, y + 12,
+             { color: '#f8e9cf', shadow: '#1b1220' });
+      ctx.fillStyle = '#4a3a48';
+      ctx.fillRect(x + 4, y + 20, w - 8, 2);
+      ctx.fillStyle = '#f2b53c';
+      ctx.fillRect(x + 4, y + 20,
+                   Math.round((w - 8) * clamp(value / goal.target, 0, 1)), 2);
+      return;
+    }
+
+    const text = `TÜM ROZETLER TAMAM  ${this.stickers}/${KIDS_GOALS.length}`;
+    const w = Math.min(CFG.VIEW_W - 150, Math.max(146, f.width(text) + 26));
+    ctx.fillStyle = 'rgba(20,14,24,0.90)';
+    ctx.fillRect(x, y, w, 20);
+    ctx.fillStyle = '#4c9b78';
+    ctx.fillRect(x, y, 2, 20);
+    this.icon(ctx, ICON.STAR, x + 4, y + 2, 0.7);
+    f.draw(ctx, text, x + 19, y + 7,
+           { color: '#74e0b0', shadow: '#1b1220' });
+  }
+
+  _drawAlerts(ctx, startY = 106) {
+    const f = this.game.font;
+    let y = startY;
 
     for (const a of this.alerts) {
       const w = f.width(a.text) + 14;
@@ -5132,13 +5196,23 @@ class Kitchen {
       y += 16;
     }
 
-    // Standing reminder: the other house is still in trouble.
+    // Standing reminder joins the same notification lane instead of sitting
+    // on the floor where it could cover station and material labels.
     if (this.away && this.away.trouble) {
       const t = `! ${this.away.name}: ${this._troubleText(this.away.trouble)}`;
       const blink = Math.sin(this.game.time * 4) > -0.5;
-      f.draw(ctx, t, CFG.VIEW_W / 2, CFG.VIEW_H - 22,
+      const w = Math.min(CFG.VIEW_W - 12, f.width(t) + 14);
+      const x = Math.round((CFG.VIEW_W - w) / 2);
+      ctx.fillStyle = 'rgba(18,12,22,0.92)';
+      ctx.fillRect(x, y, w, 13);
+      ctx.fillStyle = blink ? '#e8604f' : '#8d5450';
+      ctx.fillRect(x, y, 2, 13);
+      f.draw(ctx, t, CFG.VIEW_W / 2, y + 4,
              { align: 'center', color: blink ? '#e8604f' : '#8d5450', shadow: '#1b1220' });
+      y += 16;
     }
+
+    return y;
   }
 
   _troubleText(t) {
@@ -5275,9 +5349,10 @@ class Kitchen {
     else if (this.shopTab === 3) this._drawDebtTab(ctx, top);
     else this._drawMapTab(ctx, top);
 
+    const mobileConfirm = `${this.contextActionLabel()} DÜĞMESİ: ONAYLA`;
     f.draw(ctx, touch
-             ? (this.closed ? `JOYSTICKLE SEÇ - DURAKLAT: ${this.day + 1}. GÜN`
-                            : 'JOYSTICKLE SEÇ - DURAKLAT: DÖN')
+             ? (this.closed ? `JOYSTICKLE SEÇ - ${mobileConfirm} - DURAKLAT: ${this.day + 1}. GÜN`
+                            : `JOYSTICKLE SEÇ - ${mobileConfirm} - DURAKLAT: DÖN`)
              : (this.closed ? `A D SEKME   W S SEÇ   SPACE AL   P: ${this.day + 1}. GÜNÜ AÇ`
                             : 'A D SEKME   W S SEÇ   SPACE AL   P TEZGAHA DÖN'),
            CFG.VIEW_W / 2, CFG.VIEW_H - 10,
@@ -5669,16 +5744,16 @@ class Kitchen {
     /* ---- the order rail (screen-space, never overlaps) ----------------- */
     this._drawRail(ctx);
 
-    /* ---- rivals eating your lunch ------------------------------------- */
+    /* ---- dedicated left-side status lane ------------------------------ */
     const topR = Math.max(...this.rivals.map((r) => r.fame));
     if (topR > this.totalFame + 20) {
       const bite = Math.round((1 - clamp(1 - (topR - this.totalFame) / 180, 0.25, 1)) * 100);
-      f.draw(ctx, `RAKİPLER ÖNDE - MÜŞTERİ %${bite} AZALDI`, CFG.VIEW_W / 2, 48,
-             { align: 'center', color: '#e8604f', shadow: '#1b1220' });
+      this._drawRivalBadge(ctx, bite);
     }
+    this._drawGoalCard(ctx);
 
     /* ---- messages shouted over from the other house ------------------- */
-    this._drawAlerts(ctx);
+    const noticeY = this._drawAlerts(ctx, 106);
 
     /* ---- the menu board, down the right-hand edge ---------------------- */
     let my = 78;
@@ -5699,7 +5774,7 @@ class Kitchen {
 
     /* ---- contextual hint ----------------------------------------------- */
     if (this.hintTimer > 0) {
-      f.draw(ctx, this.hint, CFG.VIEW_W / 2, 66,
+      f.draw(ctx, this.hint, CFG.VIEW_W / 2, noticeY + 2,
              { align: 'center', color: '#f2b53c', shadow: '#1b1220' });
     }
 
@@ -5707,35 +5782,11 @@ class Kitchen {
     if (this.newlyUnlocked) {
       const blink = Math.sin(g.time * 9) > -0.4;
       if (blink) {
-        f.draw(ctx, 'MENÜ BÜYÜDÜ!', CFG.VIEW_W / 2, 88,
+        f.draw(ctx, 'MENÜ BÜYÜDÜ!', CFG.VIEW_W / 2, noticeY + 2,
                { align: 'center', scale: 2, color: '#74e0b0', shadow: '#1b1220' });
-        f.draw(ctx, this.newlyUnlocked.name, CFG.VIEW_W / 2, 106,
+        f.draw(ctx, this.newlyUnlocked.name, CFG.VIEW_W / 2, noticeY + 20,
                { align: 'center', color: '#f8e9cf', shadow: '#1b1220' });
       }
-    }
-
-    /* ---- current short goal ------------------------------------------ */
-    const goal = KIDS_GOALS[this.goalIndex];
-    if (goal) {
-      const value = Math.min(goal.target, goal.value(this));
-      const text = `HEDEF: ${goal.label}  ${value}/${goal.target}`;
-      const w = Math.min(310, f.width(text) + 16);
-      const x = Math.round((CFG.VIEW_W - w) / 2);
-      const y = CFG.VIEW_H - 44;
-      ctx.fillStyle = 'rgba(20,14,24,0.86)';
-      ctx.fillRect(x, y, w, 16);
-      ctx.fillStyle = '#4a3a48';
-      ctx.fillRect(x + 4, y + 12, w - 8, 2);
-      ctx.fillStyle = '#f2b53c';
-      ctx.fillRect(x + 4, y + 12,
-                   Math.round((w - 8) * clamp(value / goal.target, 0, 1)), 2);
-      f.draw(ctx, text, CFG.VIEW_W / 2, y + 4,
-             { align: 'center', color: '#f8e9cf', shadow: '#1b1220' });
-    } else {
-      this.icon(ctx, ICON.STAR, CFG.VIEW_W / 2 - 40, CFG.VIEW_H - 43, 0.7);
-      f.draw(ctx, `TÜM ROZETLER TAMAM  ${this.stickers}/${KIDS_GOALS.length}`,
-             CFG.VIEW_W / 2 + 8, CFG.VIEW_H - 38,
-             { align: 'center', color: '#74e0b0', shadow: '#1b1220' });
     }
   }
 }
@@ -6006,7 +6057,9 @@ class Game {
       if (inp.hit('down')) {
         this.titleCursor = (this.titleCursor + 1) % opts; this.sfx.drop();
       }
-      if (inp.hit('use')) {
+      // Space and the large mobile BAŞLA button both confirm. Phones do not
+      // need a separate keyboard-style E button.
+      if (inp.hit('use') || inp.hit('chop')) {
         this.sfx.unlock();
         const continuing = save && this.titleCursor === 0;
         if (continuing && save.act === 2) {
@@ -6344,7 +6397,7 @@ class Game {
     let sub = 'DOKUN';
     let actions = 'chop use';
     let secondary = null;
-    if (this.state === GSTATE.TITLE) { label = 'BAŞLA'; sub = 'ONAYLA'; actions = 'use'; }
+    if (this.state === GSTATE.TITLE) { label = 'BAŞLA'; sub = 'ONAYLA'; actions = 'chop use'; }
     else if (this.state === GSTATE.PLAYING) {
       label = 'YAKALA'; sub = 'KOYUNU AĞILA GÖTÜR'; actions = 'chop';
     }
@@ -6362,7 +6415,10 @@ class Game {
     else if (this.state === GSTATE.KITCHEN && this.kitchen) {
       label = this.kitchen.contextActionLabel(); sub = 'EYLEM';
       if (this.kitchen.payrollDue) {
+        sub = 'ONAYLA';
         secondary = { label: 'İŞTEN ÇIKAR', actions: 'dismiss' };
+      } else if (this.kitchen.shopOpen || this.kitchen.butcherOpen) {
+        sub = 'ONAYLA';
       } else if (!this.kitchen.shopOpen && !this.kitchen.butcherOpen && this.kitchen.carried) {
         secondary = { label: 'TABAĞI AT', actions: 'down chop' };
       }
@@ -6538,15 +6594,15 @@ class Game {
              { align: 'center', scale: 2,
                color: sel ? '#74e0b0' : '#8d8296', shadow: '#1b1220' });
     });
-    f.draw(ctx, touch ? (save ? 'JOYSTICKLE SEÇ - BAŞLA İLE ONAYLA' : 'BAŞLA DÜĞMESİNE DOKUN')
-                      : (save ? 'W S SEÇ     E ONAYLA' : 'E İLE BAŞLA'),
+    f.draw(ctx, touch ? (save ? 'JOYSTICKLE SEÇ - BAŞLA DÜĞMESİYLE ONAYLA' : 'BAŞLA DÜĞMESİNE DOKUN')
+                      : (save ? 'W S SEÇ     SPACE ONAYLA' : 'SPACE İLE BAŞLA'),
            CFG.VIEW_W / 2, 206, { align: 'center', color: '#8d8296' });
     f.draw(ctx, `${touch ? 'JOYSTICK SAĞ SOL' : 'A D İLE'} MOD SEÇ: ${DIFFICULTY_LABEL[this.difficulty]}`,
            CFG.VIEW_W / 2, 218,
            { align: 'center', color: this.difficulty === DIFFICULTY.RELAXED ? '#74e0b0' : '#f2b53c',
              shadow: '#1b1220' });
     f.draw(ctx, touch ? 'JOYSTICK: YÜRÜ - ZIPLA - EĞİL'
-                      : 'A D YÜRÜ   W ZIPLA   S EĞİL   SPACE YAKALA   E KULLAN',
+                      : 'A D YÜRÜ   W ZIPLA   S EĞİL   SPACE YAKALA / KULLAN',
            CFG.VIEW_W / 2, 232, { align: 'center', color: '#6d6376' });
   }
 
