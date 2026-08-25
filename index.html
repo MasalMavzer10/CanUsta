@@ -21,16 +21,23 @@
   <!-- Telefonda aynı anda koşma, eğilme ve doğrama için çoklu dokunmatik. -->
   <div id="mobile-controls" aria-label="Dokunmatik oyun kumandası">
     <div class="touch-system" role="group" aria-label="Oyun seçenekleri">
+      <button id="joystick-sensitivity" class="touch-btn touch-mini touch-sensitivity"
+              type="button" data-actions="sensitivity" aria-label="Joystick hassasiyeti normal">N</button>
       <button class="touch-btn touch-mini" type="button" data-actions="fullscreen" aria-label="Tam ekran">&#x26F6;</button>
       <button class="touch-btn touch-mini" type="button" data-actions="pause" aria-label="Duraklat">&#10074;&#10074;</button>
       <button class="touch-btn touch-mini" type="button" data-actions="retry" aria-label="Tekrar dene">&#8635;</button>
     </div>
 
-    <div class="touch-move" role="group" aria-label="Hareket">
-      <button class="touch-btn touch-w touch-word" type="button" data-actions="jump" aria-label="Zıpla">ZIPLA</button>
-      <button class="touch-btn touch-a" type="button" data-actions="left" aria-label="Sola git">&#9664;</button>
-      <button class="touch-btn touch-s" type="button" data-actions="down" aria-label="Eğil">&#9660;</button>
-      <button class="touch-btn touch-d" type="button" data-actions="right" aria-label="Sağa git">&#9654;</button>
+    <div id="joystick-zone" class="joystick-zone" role="application"
+         aria-label="Hareket joysticki: sağ sol yürü, yukarı zıpla, aşağı eğil">
+      <div id="joystick-base" class="joystick-base" aria-hidden="true">
+        <span class="joystick-arrow joystick-arrow-up">&#9650;</span>
+        <span class="joystick-arrow joystick-arrow-down">&#9660;</span>
+        <span class="joystick-arrow joystick-arrow-left">&#9664;</span>
+        <span class="joystick-arrow joystick-arrow-right">&#9654;</span>
+        <div id="joystick-knob" class="joystick-knob"></div>
+        <small id="joystick-label" class="joystick-label">NORMAL</small>
+      </div>
     </div>
 
     <div class="touch-action" role="group" aria-label="Eylem">
@@ -55,8 +62,7 @@
     <span><b>A</b> <b>D</b> yürü</span>
     <span><b>W</b> zıpla</span>
     <span><b>S</b> eğil</span>
-    <span><b>S + W</b> alttan geç</span>
-    <span><b>&uarr;</b> tırman</span>
+    <span><b>S BASILI TUT</b> alttan geç</span>
     <span><b>SPACE</b> yakala <i>(1. perde)</i> &middot; kullan <i>(2. perde)</i></span>
     <span><b>S + SPACE</b> tabağı at</span>
     <span><b>X</b> işten çıkar <i>(maaş günü)</i></span>

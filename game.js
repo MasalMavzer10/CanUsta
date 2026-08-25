@@ -544,15 +544,30 @@ class Scratch {
 const KEYMAP = {
   KeyA: 'left',  ArrowLeft: 'left',      // strafe left
   KeyD: 'right', ArrowRight: 'right',    // strafe right
-  KeyS: 'down',  ArrowDown: 'down',      // crouch / climb down / menu down
+  KeyS: 'down',  ArrowDown: 'down',      // crouch / drop-through / menu down
   KeyW: 'jump',                          // jump
   Space: 'chop',                         // Act 1: cleaver. Act 2: the action key.
-  ArrowUp: 'up',                         // climb a spit / menu up
+  ArrowUp: 'up',                         // menu up
   KeyE: 'use', KeyF: 'use',              // interact, pick up, hire, wash up
   KeyX: 'dismiss',                       // MAAŞ GÜNÜ: let a worker go
   KeyO: 'retry',
   KeyP: 'pause', Escape: 'pause',
 };
+
+const JOYSTICK_STORAGE_KEY = 'can-usta-joystick-v1';
+const JOYSTICK_PROFILES = [
+  { id: 'low',    short: 'D', label: 'DÜŞÜK',  dead: 0.28, curve: 1.25 },
+  { id: 'normal', short: 'N', label: 'NORMAL', dead: 0.20, curve: 1.00 },
+  { id: 'high',   short: 'Y', label: 'YÜKSEK', dead: 0.12, curve: 0.82 },
+];
+
+function readJoystickProfile() {
+  try {
+    const id = localStorage.getItem(JOYSTICK_STORAGE_KEY);
+    return JOYSTICK_PROFILES.findIndex((p) => p.id === id) >= 0
+      ? JOYSTICK_PROFILES.findIndex((p) => p.id === id) : 1;
+  } catch (_) { return 1; }
+}
 
 class Input {
   constructor(target) {
@@ -561,8 +576,13 @@ class Input {
     this.keyboardHeld = Object.create(null);
     this.touchCounts = Object.create(null);
     this.touchPointers = new Map();
+    this.joystickActions = new Set();
+    this.joystickPointer = null;
+    this.joystickX = 0;
+    this.jumpPressStrength = 1;
+    this.joystickProfileIndex = readJoystickProfile();
+    this.joystick = null;
     this.anyPressed = false;
-    this.worldTouchAllowed = () => false;
 
     target.addEventListener('keydown', (e) => {
       const a = KEYMAP[e.code];
@@ -573,6 +593,7 @@ class Input {
       this.keyboardHeld[a] = true;
       this.held[a] = true;
       this.pressed[a] = true;
+      if (a === 'jump') this.jumpPressStrength = 1;
     });
 
     target.addEventListener('keyup', (e) => {
@@ -580,7 +601,7 @@ class Input {
       if (!a) return;
       e.preventDefault();
       this.keyboardHeld[a] = false;
-      if (!(this.touchCounts[a] > 0)) this.held[a] = false;
+      if (!(this.touchCounts[a] > 0) && !this.joystickActions.has(a)) this.held[a] = false;
     });
 
     // A lost focus must not leave keys stuck down.
@@ -592,7 +613,8 @@ class Input {
     this.touchMode = touchCapable;
     document.documentElement.classList.toggle('touch-enabled', touchCapable);
     this.bindTouchControls(document.getElementById('mobile-controls'));
-    this.bindWorldTouch(document.getElementById('game'));
+    this.bindJoystick(document.getElementById('joystick-zone'));
+    this._updateJoystickSensitivityUI();
 
     // Hybrid laptops may report no touch points until the first real touch.
     window.addEventListener('pointerdown', (e) => {
@@ -622,6 +644,14 @@ class Input {
       button.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         const actions = button.dataset.actions.trim().split(/\s+/);
+
+        if (actions.includes('sensitivity')) {
+          this.cycleJoystickSensitivity();
+          button.classList.add('is-held');
+          window.setTimeout(() => button.classList.remove('is-held'), 140);
+          e.stopPropagation();
+          return;
+        }
 
         // Full-screen is a browser command, not a held game action. Keeping
         // it on pointerdown preserves the user gesture required by iOS and
@@ -663,7 +693,8 @@ class Input {
         pointer.button.classList.remove('is-held');
         for (const action of pointer.actions) {
           this.touchCounts[action] = Math.max(0, (this.touchCounts[action] || 1) - 1);
-          if (this.touchCounts[action] === 0 && !this.keyboardHeld[action]) {
+          if (this.touchCounts[action] === 0 && !this.keyboardHeld[action] &&
+              !this.joystickActions.has(action)) {
             this.held[action] = false;
           }
         }
@@ -675,39 +706,131 @@ class Input {
     }
   }
 
-  /**
-   * Pressing and holding an empty part of the game view replaces the old
-   * dedicated TIR button. The gesture maps to the same continuous `up`
-   * action as ArrowUp, which is important because climbing is not a tap.
-   */
-  bindWorldTouch(surface) {
-    if (!surface) return;
+  /** Floating analogue stick: horizontal movement, up jump, down crouch. */
+  bindJoystick(zone) {
+    if (!zone) return;
+    const base = document.getElementById('joystick-base');
+    const knob = document.getElementById('joystick-knob');
+    if (!base || !knob) return;
+    this.joystick = { zone, base, knob, cx: 0, cy: 0, radius: 36 };
+
+    const move = (e) => {
+      if (e.pointerId !== this.joystickPointer) return;
+      e.preventDefault();
+      this._moveJoystick(e.clientX, e.clientY);
+    };
     const release = (e) => {
-      const pointer = this.touchPointers.get(e.pointerId);
-      if (!pointer || pointer.button !== surface) return;
-      this.touchPointers.delete(e.pointerId);
-      this.touchCounts.up = Math.max(0, (this.touchCounts.up || 1) - 1);
-      if (this.touchCounts.up === 0 && !this.keyboardHeld.up) this.held.up = false;
+      if (e.pointerId !== this.joystickPointer) return;
+      e.preventDefault();
+      this._releaseJoystick();
     };
 
-    surface.addEventListener('pointerdown', (e) => {
-      if (!this.touchMode || !this.worldTouchAllowed() || this.touchPointers.has(e.pointerId)) return;
+    zone.addEventListener('pointerdown', (e) => {
+      if (this.joystickPointer !== null) return;
       e.preventDefault();
-      surface.setPointerCapture?.(e.pointerId);
-      const wasDown = this.down('up');
-      this.touchPointers.set(e.pointerId, { actions: ['up'], button: surface });
-      this.touchCounts.up = (this.touchCounts.up || 0) + 1;
-      this.held.up = true;
-      if (!wasDown) this.pressed.up = true;
+      zone.setPointerCapture?.(e.pointerId);
+      this.joystickPointer = e.pointerId;
+
+      const rect = zone.getBoundingClientRect();
+      const outer = base.getBoundingClientRect().width / 2;
+      const cx = clamp(e.clientX - rect.left, outer + 4, rect.width - outer - 4);
+      const cy = clamp(e.clientY - rect.top, outer + 4, rect.height - outer - 20);
+      this.joystick.cx = rect.left + cx;
+      this.joystick.cy = rect.top + cy;
+      this.joystick.radius = Math.max(28, outer * 0.62);
+      base.style.left = `${Math.round(cx)}px`;
+      base.style.top = `${Math.round(cy)}px`;
+      base.classList.add('is-active');
+      this._moveJoystick(e.clientX, e.clientY);
       this.anyPressed = true;
     });
-    surface.addEventListener('pointerup', release);
-    surface.addEventListener('pointercancel', release);
-    surface.addEventListener('lostpointercapture', release);
+    zone.addEventListener('pointermove', move);
+    zone.addEventListener('pointerup', release);
+    zone.addEventListener('pointercancel', release);
+    zone.addEventListener('lostpointercapture', release);
+  }
+
+  _setJoystickAction(action, on) {
+    const active = this.joystickActions.has(action);
+    if (on && !active) {
+      this.joystickActions.add(action);
+      this.held[action] = true;
+      this.pressed[action] = true;
+      this.anyPressed = true;
+    } else if (!on && active) {
+      this.joystickActions.delete(action);
+      if (!this.keyboardHeld[action] && !(this.touchCounts[action] > 0)) this.held[action] = false;
+    }
+  }
+
+  _moveJoystick(clientX, clientY) {
+    const j = this.joystick;
+    if (!j) return;
+    const dx = clientX - j.cx;
+    const dy = clientY - j.cy;
+    const dist = Math.hypot(dx, dy);
+    const scale = dist > j.radius ? j.radius / dist : 1;
+    const px = dx * scale;
+    const py = dy * scale;
+    j.knob.style.transform = `translate(-50%, -50%) translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)`;
+
+    const nx = px / j.radius;
+    const ny = py / j.radius;
+    const profile = JOYSTICK_PROFILES[this.joystickProfileIndex];
+    const response = (v) => v <= profile.dead ? 0
+      : Math.pow((v - profile.dead) / (1 - profile.dead), profile.curve);
+    const horizontal = response(Math.abs(nx)) * sign(nx);
+    const upward = response(Math.max(0, -ny));
+    const downward = response(Math.max(0, ny));
+    const horizontalIntent = Math.abs(nx) > Math.abs(ny) * 0.58;
+    const verticalIntent = Math.abs(ny) > Math.abs(nx) * 0.58;
+
+    this.joystickX = horizontalIntent ? horizontal : 0;
+    this._setJoystickAction('left', this.joystickX < -0.01);
+    this._setJoystickAction('right', this.joystickX > 0.01);
+    this._setJoystickAction('down', verticalIntent && downward > 0);
+
+    const jumping = verticalIntent && upward > 0;
+    if (jumping && !this.joystickActions.has('jump')) this.jumpPressStrength = upward;
+    else if (jumping) this.jumpPressStrength = Math.max(this.jumpPressStrength, upward);
+    this._setJoystickAction('jump', jumping);
+  }
+
+  _releaseJoystick() {
+    if (!this.joystick) return;
+    this.joystickPointer = null;
+    this.joystickX = 0;
+    for (const action of ['left', 'right', 'down', 'jump']) this._setJoystickAction(action, false);
+    this.joystick.knob.style.transform = 'translate(-50%, -50%)';
+    this.joystick.base.classList.remove('is-active');
+  }
+
+  cycleJoystickSensitivity() {
+    this.joystickProfileIndex = (this.joystickProfileIndex + 1) % JOYSTICK_PROFILES.length;
+    try { localStorage.setItem(JOYSTICK_STORAGE_KEY,
+                               JOYSTICK_PROFILES[this.joystickProfileIndex].id); } catch (_) {}
+    this._updateJoystickSensitivityUI();
+  }
+
+  _updateJoystickSensitivityUI() {
+    const p = JOYSTICK_PROFILES[this.joystickProfileIndex];
+    const button = document.getElementById('joystick-sensitivity');
+    const label = document.getElementById('joystick-label');
+    if (button) {
+      button.textContent = p.short;
+      button.setAttribute('aria-label', `Joystick hassasiyeti ${p.label.toLocaleLowerCase('tr-TR')}`);
+    }
+    if (label) label.textContent = p.label;
   }
 
   down(a) { return !!this.held[a]; }
   hit(a) { return !!this.pressed[a]; }
+  moveAxis() {
+    if (this.keyboardHeld.left && !this.keyboardHeld.right) return -1;
+    if (this.keyboardHeld.right && !this.keyboardHeld.left) return 1;
+    return this.joystickX;
+  }
+  jumpPower() { return clamp(this.jumpPressStrength || 1, 0, 1); }
 
   /** Called at the end of every fixed step. */
   endStep() {
@@ -722,6 +845,7 @@ class Input {
     for (const k in this.touchCounts) this.touchCounts[k] = 0;
     for (const pointer of this.touchPointers.values()) pointer.button.classList.remove('is-held');
     this.touchPointers.clear();
+    this._releaseJoystick();
   }
 }
 
@@ -783,8 +907,8 @@ const TILE = {
   SUBFLOOR: 2,   // dirt/board fill under the floor           (solid)
   BRICK:    3,   // wall                                      (solid)
   PLATE:    4,   // porcelain plate platform                  (one-way)
-  LAHMACUN: 5,   // flatbread layer            (one-way + climbable)
-  DONER:    6,   // kebab spit column                         (climbable)
+  LAHMACUN: 5,   // flatbread layer                         (one-way)
+  DONER:    6,   // decorative kebab spit column
   TREE:     7,   // potted tree, LOWER half        (cover, non-solid)
   TABLE:    8,   // wooden table top                       (semi-solid)
   COUNTER:  9,   // stainless kitchen counter                 (solid)
@@ -798,7 +922,6 @@ const SOLID_TILES  = new Set([TILE.FLOOR, TILE.SUBFLOOR, TILE.BRICK,
 // Tables are semi-solid: you hop onto them from below and can drop back
 // through, but they still break an enemy's line of sight (see COVER_TILES).
 const ONEWAY_TILES = new Set([TILE.PLATE, TILE.LAHMACUN, TILE.TABLE]);
-const CLIMB_TILES  = new Set([TILE.LAHMACUN, TILE.DONER]);
 /** Tiles that break an enemy's line of sight — this is what "cover" means. */
 const COVER_TILES  = new Set([TILE.BRICK, TILE.TABLE, TILE.COUNTER,
                               TILE.CRATE, TILE.TREE, TILE.TREE_TOP]);
@@ -842,7 +965,6 @@ class LevelMap {
     return SOLID_TILES.has(this.tiles[r * this.cols + c]);
   }
   isOneWay(c, r) { return ONEWAY_TILES.has(this.at(c, r)); }
-  isClimb(c, r) { return CLIMB_TILES.has(this.at(c, r)); }
   blocksSight(c, r) {
     const t = this.at(c, r);
     return COVER_TILES.has(t) || SOLID_TILES.has(t);
@@ -877,11 +999,11 @@ class LevelMap {
     /* =============== SECTION B — THE KITCHEN  (cols 35..75) ========== */
     this.fill(36, 13, 44, 14, TILE.COUNTER);        // prep line
     this.fill(46, 10, 50, 10, TILE.PLATE);
-    this.fill(52, 9, 52, 14, TILE.DONER);           // climbable kebab spit
+    this.fill(52, 9, 52, 14, TILE.DONER);           // decorative kebab spit
     this.fill(54, 12, 58, 12, TILE.PLATE);
     this.fill(60, 13, 61, 14, TILE.CRATE);
     this.fill(62, 9, 66, 9, TILE.PLATE);
-    this.fill(68, 11, 72, 11, TILE.LAHMACUN);       // climb AND stand on it
+    this.fill(68, 11, 72, 11, TILE.LAHMACUN);       // jump-through food platform
     this.tree(70, F - 1);
     this.fill(74, 13, 75, 14, TILE.CRATE);
 
@@ -1230,7 +1352,6 @@ class Player {
 
     this.facing = 1;               // +1 right, -1 left
     this.crouching = false;
-    this.climbing = false;
     this.state = PSTATE.ALIVE;
 
     this.hp = CFG.PLAYER_HP;
@@ -1240,10 +1361,11 @@ class Player {
     this.coyote = 0;               // time left to still count as grounded
     this.jumpBuffer = 0;           // time left on a buffered jump press
     this.dropTimer = 0;            // one-way collision disabled while > 0
+    this.dropHold = 0;             // hold down briefly to fall through
     this.cutCooldown = 0;
     this.cutAnimTimer = 0;         // how long to keep showing PLAYER_SHOOT
     this.deathTimer = 0;
-    this.canChop = true;           // Act 2 disables combat; J becomes USE
+    this.canChop = true;           // Act 2 disables combat; action becomes USE
 
     // Seed a clip immediately so the chef is visible before his first step
     // (the title screen renders the live world behind the banner).
@@ -1301,26 +1423,37 @@ class Player {
     if (this.flashTicks > 0) this.flashTicks--;
 
     const b = this.body;
-    const wantLeft = input.down('left');
-    const wantRight = input.down('right');
+    const moveX = input.moveAxis();
     const wantDown = input.down('down');
-    const wantUp = input.down('up');
 
     /* ---- crouch: halve the AABB height, keeping the feet planted ------ */
-    const wantCrouch = wantDown && b.onGround && !this.climbing;
+    const wantCrouch = wantDown && b.onGround;
     this._setCrouch(wantCrouch, map);
 
-    /* ---- climbing the doner spits & lahmacun layers ------------------- */
-    this._updateClimb(dt, map, input, wantUp, wantDown);
+    /* ---- hold down to drop through a plate/table/food platform -------- */
+    if (wantDown && b.onGround && this._standingOnOneWay(map)) {
+      this.dropHold += dt;
+      if (this.dropHold >= 0.24) {
+        this._setCrouch(false, map);
+        this.dropTimer = CFG.DROP_THRU;
+        b.y += 1;
+        b.vy = 40;
+        b.onGround = false;
+        this.dropHold = 0;
+        this.game.sfx.drop();
+      }
+    } else if (!wantDown || !b.onGround) {
+      this.dropHold = 0;
+    }
 
     /* ---- horizontal kinematics ---------------------------------------
      * v_x(t+dt) = clamp( v_x(t) + a_x*dt , -maxSpeed, +maxSpeed )
      * with the friction coefficient applied only when no input is held,
      * exactly as the control spec describes.
-     * ------------------------------------------------------------------ */
-    let ax = 0;
-    if (wantLeft && !wantRight) { ax = -CFG.ACCEL_X; this.facing = -1; }
-    else if (wantRight && !wantLeft) { ax = CFG.ACCEL_X; this.facing = 1; }
+    * ------------------------------------------------------------------ */
+    let ax = CFG.ACCEL_X * moveX;
+    if (moveX < -0.01) this.facing = -1;
+    else if (moveX > 0.01) this.facing = 1;
 
     // Crouching pins you in place — that is what makes it *cover*.
     if (this.crouching) ax = 0;
@@ -1328,7 +1461,9 @@ class Player {
     b.vx += ax * dt;
     if (ax === 0) b.vx *= CFG.FRICTION;
     if (Math.abs(b.vx) < 1) b.vx = 0;
-    b.vx = clamp(b.vx, -CFG.MAX_SPEED, CFG.MAX_SPEED);
+    const analogMax = Math.abs(moveX) > 0.01
+      ? CFG.MAX_SPEED * (0.35 + 0.65 * Math.abs(moveX)) : CFG.MAX_SPEED;
+    b.vx = clamp(b.vx, -analogMax, analogMax);
 
     /* ---- coyote time & input buffering -------------------------------- */
     if (b.onGround) this.coyote = CFG.COYOTE; else this.coyote -= dt;
@@ -1336,32 +1471,23 @@ class Player {
     else this.jumpBuffer -= dt;
 
     /* ---- jump / drop-through ------------------------------------------ */
-    if (this.jumpBuffer > 0 && (this.coyote > 0 || this.climbing)) {
-      if (wantDown && b.onGround && this._standingOnOneWay(map)) {
-        // S + W (crouch + jump) on a semi-solid plate: drop through it.
-        this.dropTimer = CFG.DROP_THRU;
-        b.y += 1;
-        b.vy = 40;
-        this.game.sfx.drop();
-      } else {
-        b.vy = CFG.JUMP_V;             // v_0, applied instantaneously
-        this.game.sfx.jump();
-        this.game.puff(b.cx, b.bottom, 5);
-      }
+    if (this.jumpBuffer > 0 && this.coyote > 0 && !wantDown) {
+      // Stick distance chooses the launch impulse; holding upward preserves
+      // the rise, while an early release triggers the jump-cut below.
+      b.vy = lerp(-330, CFG.JUMP_V, input.jumpPower());
+      this.game.sfx.jump();
+      this.game.puff(b.cx, b.bottom, 5);
       this.jumpBuffer = 0;
       this.coyote = 0;
-      this.climbing = false;
       this._setCrouch(false, map);
     }
 
-    // Variable jump height: releasing SPACE early cuts the rise short.
+    // Variable jump height: releasing W / joystick-up cuts the rise short.
     if (b.vy < 0 && !input.down('jump')) b.vy *= 0.86;
 
     /* ---- vertical kinematics:  v_y(t+dt) = v_y(t) + g*dt -------------- */
-    if (!this.climbing) {
-      b.vy += CFG.GRAVITY * dt;
-      b.vy = Math.min(b.vy, CFG.MAX_FALL);
-    }
+    b.vy += CFG.GRAVITY * dt;
+    b.vy = Math.min(b.vy, CFG.MAX_FALL);
 
     /* ---- chop --------------------------------------------------------- */
     if (this.canChop && input.hit('chop') && this.cutCooldown <= 0) this._chop();
@@ -1434,27 +1560,6 @@ class Player {
     return false;
   }
 
-  _updateClimb(dt, map, input, wantUp, wantDown) {
-    const b = this.body;
-    const c = Math.floor(b.cx / CFG.TILE);
-    const rTop = Math.floor(b.y / CFG.TILE);
-    const rMid = Math.floor(b.cy / CFG.TILE);
-    const onLadder = map.isClimb(c, rTop) || map.isClimb(c, rMid);
-
-    if (!onLadder) { this.climbing = false; return; }
-    if (!this.climbing && (wantUp || (wantDown && !b.onGround))) {
-      this.climbing = true;
-      this._setCrouch(false, map);
-    }
-    if (this.climbing) {
-      b.vy = (wantUp ? -70 : 0) + (wantDown ? 70 : 0);
-      b.vx *= 0.6;
-      // Snap toward the ladder centre so you never rub off the edge.
-      const centre = c * CFG.TILE + CFG.TILE / 2;
-      b.x = lerp(b.x, centre - b.w / 2, 0.25);
-    }
-  }
-
   _chop() {
     this.cutCooldown = CFG.CUT_COOLDOWN;
     this.cutAnimTimer = 4 / ASSET_MANIFEST.PLAYER_SHOOT.fps;  // one full clip
@@ -1483,8 +1588,6 @@ class Player {
                      this.crouching ? A.PLAYER_CROUCH : A.PLAYER_SHOOT);
     } else if (this.crouching) {
       this.anim.play('crouch', A.PLAYER_CROUCH);
-    } else if (this.climbing) {
-      this.anim.play('jump', A.PLAYER_JUMP);
     } else if (!b.onGround) {
       this.anim.play('jump', A.PLAYER_JUMP);
     } else if (Math.abs(b.vx) > 8) {
@@ -1948,9 +2051,8 @@ class KidsGuide {
     if (this.act1 === 0 && (input.hit('left') || input.hit('right') ||
                            input.down('left') || input.down('right'))) this.advance('act1');
     else if (this.act1 === 1 && input.hit('jump')) this.advance('act1');
-    else if (this.act1 === 2 && input.hit('up')) this.advance('act1');
-    else if (this.act1 === 3 && this.game.killed > 0) this.advance('act1');
-    else if (this.act1 === 4 && this.game.checkpointX >= CFG.VIEW_W) this.advance('act1');
+    else if (this.act1 === 2 && this.game.killed > 0) this.advance('act1');
+    else if (this.act1 === 3 && this.game.checkpointX >= CFG.VIEW_W) this.advance('act1');
   }
 
   stepKitchen(kitchen) {
@@ -1965,17 +2067,15 @@ class KidsGuide {
   line(phase) {
     const touch = this.game.input.touchMode;
     const act1 = touch ? [
-      '1/5  SOL VE SAĞ OKLARLA YÜRÜ',
-      '2/5  ZIPLA DÜĞMESİNE DOKUN',
-      '3/5  TIRMANMAK İÇİN BOŞ EKRANA BASILI TUT',
-      '4/5  YAKALA DÜĞMESİNE DOKUN',
-      '5/5  İLERLE VE KAYIT NOKTASINA ULAŞ',
+      '1/4  JOYSTICKI SAĞA SOLA İT: YÜRÜ',
+      '2/4  YUKARI İT; YÜKSEK İÇİN UZUN TUT',
+      '3/4  YAKALA DÜĞMESİNE DOKUN',
+      '4/4  İLERLE VE KAYIT NOKTASINA ULAŞ',
     ] : [
-      '1/5  A VE D İLE YÜRÜ',
-      '2/5  W İLE ZIPLA',
-      '3/5  YUKARI OK İLE TIRMAN',
-      '4/5  SPACE İLE KOYUNU YAKALA',
-      '5/5  İLERLE VE KAYIT NOKTASINA ULAŞ',
+      '1/4  A VE D İLE YÜRÜ',
+      '2/4  W BASILI: YÜKSEK ZIPLA',
+      '3/4  SPACE İLE KOYUNU YAKALA',
+      '4/4  İLERLE VE KAYIT NOKTASINA ULAŞ',
     ];
     const act2 = [
       '1/5  TEZGAHA GİT VE MALZEMEYİ AL',
@@ -4998,7 +5098,7 @@ class Kitchen {
                         : 'X: SEÇİLENİ İŞTEN ÇIKAR',
              CFG.VIEW_W / 2, by + 18, { align: 'center', color: '#8d8296' });
     }
-    f.draw(ctx, touch ? 'YUKARI AŞAĞI İLE SEÇ' : 'W S SEÇ', CFG.VIEW_W / 2, CFG.VIEW_H - 10,
+    f.draw(ctx, touch ? 'JOYSTICK YUKARI AŞAĞI: SEÇ' : 'W S SEÇ', CFG.VIEW_W / 2, CFG.VIEW_H - 10,
            { align: 'center', color: '#6d6376' });
 
     if (this.hintTimer > 0) {
@@ -5121,7 +5221,7 @@ class Kitchen {
     f.draw(ctx, `YOL ${Math.round(BUTCHER_TRIP_HOURS * 60)} DAKİKA SÜRDÜ - SAAT ${clockLabel(this.hour)}`,
            CFG.VIEW_W / 2, CFG.VIEW_H - 24,
            { align: 'center', color: '#e8a24a' });
-    f.draw(ctx, touch ? 'YUKARI AŞAĞI SEÇ - SATIN AL - DURAKLAT: DÖN'
+    f.draw(ctx, touch ? 'JOYSTICKLE SEÇ - SATIN AL - DURAKLAT: DÖN'
                       : 'W S SEÇ     SPACE AL     P MUTFAĞA DÖN',
            CFG.VIEW_W / 2, CFG.VIEW_H - 12, { align: 'center', color: '#8d8296' });
 
@@ -5175,8 +5275,8 @@ class Kitchen {
     else this._drawMapTab(ctx, top);
 
     f.draw(ctx, touch
-             ? (this.closed ? `SOL SAĞ SEKME - YUKARI AŞAĞI SEÇ - DURAKLAT: ${this.day + 1}. GÜN`
-                            : 'SOL SAĞ SEKME - YUKARI AŞAĞI SEÇ - DURAKLAT: DÖN')
+             ? (this.closed ? `JOYSTICKLE SEÇ - DURAKLAT: ${this.day + 1}. GÜN`
+                            : 'JOYSTICKLE SEÇ - DURAKLAT: DÖN')
              : (this.closed ? `A D SEKME   W S SEÇ   SPACE AL   P: ${this.day + 1}. GÜNÜ AÇ`
                             : 'A D SEKME   W S SEÇ   SPACE AL   P TEZGAHA DÖN'),
            CFG.VIEW_W / 2, CFG.VIEW_H - 10,
@@ -5704,7 +5804,6 @@ class Game {
     this.lastMobileLabel = '';
 
     this.state = GSTATE.LOADING;
-    this.input.worldTouchAllowed = () => this.state === GSTATE.PLAYING;
     this.resumeState = GSTATE.PLAYING;   // where PAUSE returns to
     this.checkpointX = 0;                // furthest screen reached in Act 1
     this.clearedSpawns = new Set();      // sheep that stay dead across retries
@@ -6436,14 +6535,14 @@ class Game {
              { align: 'center', scale: 2,
                color: sel ? '#74e0b0' : '#8d8296', shadow: '#1b1220' });
     });
-    f.draw(ctx, touch ? (save ? 'OKLARLA SEÇ - BAŞLA İLE ONAYLA' : 'BAŞLA DÜĞMESİNE DOKUN')
+    f.draw(ctx, touch ? (save ? 'JOYSTICKLE SEÇ - BAŞLA İLE ONAYLA' : 'BAŞLA DÜĞMESİNE DOKUN')
                       : (save ? 'W S SEÇ     E ONAYLA' : 'E İLE BAŞLA'),
            CFG.VIEW_W / 2, 206, { align: 'center', color: '#8d8296' });
-    f.draw(ctx, `${touch ? 'SOL SAĞ OKLARLA' : 'A D İLE'} MOD SEÇ: ${DIFFICULTY_LABEL[this.difficulty]}`,
+    f.draw(ctx, `${touch ? 'JOYSTICK SAĞ SOL' : 'A D İLE'} MOD SEÇ: ${DIFFICULTY_LABEL[this.difficulty]}`,
            CFG.VIEW_W / 2, 218,
            { align: 'center', color: this.difficulty === DIFFICULTY.RELAXED ? '#74e0b0' : '#f2b53c',
              shadow: '#1b1220' });
-    f.draw(ctx, touch ? 'EKRANDAKİ DÜĞMELERLE OYNA'
+    f.draw(ctx, touch ? 'JOYSTICK: YÜRÜ - ZIPLA - EĞİL'
                       : 'A D YÜRÜ   W ZIPLA   S EĞİL   SPACE YAKALA   E KULLAN',
            CFG.VIEW_W / 2, 232, { align: 'center', color: '#6d6376' });
   }
