@@ -261,6 +261,22 @@ html.touch-enabled #mobile-controls {
   background: rgba(124, 37, 31, 0.60);
 }
 
+.touch-jump {
+  right: 12px;
+  bottom: calc(100% + 10px);
+  width: clamp(58px, 13vmin, 76px);
+  height: clamp(48px, 11vmin, 62px);
+  border-radius: 20px;
+  border-color: rgba(116,224,176,0.92);
+  background: rgba(24,91,70,0.72);
+  color: #e8fff5;
+  font-size: clamp(10px, 2.4vmin, 14px);
+}
+
+.touch-jump[hidden] {
+  display: none !important;
+}
+
 .touch-secondary {
   right: calc(100% + 10px);
   bottom: 8px;

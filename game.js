@@ -681,6 +681,7 @@ class Input {
           const wasDown = this.down(action);
           this.touchCounts[action] = (this.touchCounts[action] || 0) + 1;
           this.held[action] = true;
+          if (action === 'jump') this.jumpPressStrength = 1;
           if (!wasDown) this.pressed[action] = true;
         }
         this.anyPressed = true;
@@ -2068,7 +2069,7 @@ class KidsGuide {
     const touch = this.game.input.touchMode;
     const act1 = touch ? [
       '1/4  JOYSTICKI SAĞA SOLA İT: YÜRÜ',
-      '2/4  YUKARI İT; YÜKSEK İÇİN UZUN TUT',
+      '2/4  ZIPLA DÜĞMESİNE BAS; YÜKSEK İÇİN TUT',
       '3/4  YAKALA DÜĞMESİNE DOKUN',
       '4/4  İLERLE VE KAYIT NOKTASINA ULAŞ',
     ] : [
@@ -5800,6 +5801,7 @@ class Game {
     this.mobileAction = document.querySelector('.touch-main');
     this.mobileActionText = this.mobileAction?.querySelector('strong') || null;
     this.mobileActionSub = this.mobileAction?.querySelector('small') || null;
+    this.mobileJump = document.getElementById('touch-jump');
     this.mobileSecondary = document.getElementById('touch-secondary');
     this.lastMobileLabel = '';
 
@@ -6337,6 +6339,7 @@ class Game {
 
   _updateMobileAction() {
     if (!this.mobileActionText) return;
+    if (this.mobileJump) this.mobileJump.hidden = this.state !== GSTATE.PLAYING;
     let label = 'EYLEM';
     let sub = 'DOKUN';
     let actions = 'chop use';
